@@ -1,3 +1,7 @@
 module github.com/Raoof128/red-team-c2/implant
 
-go 1.24.7
+go 1.21
+
+require golang.org/x/crypto v0.17.0
+
+require golang.org/x/sys v0.15.0 // indirect

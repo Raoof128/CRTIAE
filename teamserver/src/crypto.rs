@@ -6,6 +6,7 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     XChaCha20Poly1305, XNonce,
 };
+use base64::{Engine as _, engine::general_purpose};
 use rand::Rng;
 
 /// Generate a random 32-byte encryption key
@@ -38,7 +39,7 @@ pub fn encrypt(key: &[u8], plaintext: &[u8]) -> Result<String, String> {
     combined.extend_from_slice(&ciphertext);
 
     // Base64 encode
-    Ok(base64::encode(combined))
+    Ok(general_purpose::STANDARD.encode(combined))
 }
 
 /// Decrypt base64-encoded ciphertext
@@ -48,7 +49,7 @@ pub fn decrypt(key: &[u8], encoded_ciphertext: &str) -> Result<Vec<u8>, String> 
     }
 
     // Decode base64
-    let combined = base64::decode(encoded_ciphertext)
+    let combined = general_purpose::STANDARD.decode(encoded_ciphertext)
         .map_err(|e| format!("Base64 decode failed: {}", e))?;
 
     if combined.len() < 24 {

@@ -1,0 +1,68 @@
+# Docker ignore file for Red Team C2 Framework
+# Optimizes build context and speeds up Docker builds
+
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+IMPLEMENTATION_SUMMARY.md
+SECURITY_POLICY.md
+*.md
+
+# Build artifacts
+build/
+target/
+*.exe
+*.dll
+*.so
+*.dylib
+implant/implant
+
+# Logs
+*.log
+logs/
+teamserver_logs/
+
+# Environment
+.env
+.env.*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+postgres_data/
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+
+# Rust
+Cargo.lock
+**/*.rs.bk
+
+# Go
+vendor/
+
+# Test artifacts
+coverage/
+*.test
+
+# Temporary
+tmp/
+temp/
+*.tmp

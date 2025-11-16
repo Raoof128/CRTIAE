@@ -1,6 +1,7 @@
 package comms
 
 import (
+	"context"
 	"encoding/base32"
 	"encoding/hex"
 	"errors"
@@ -169,7 +170,7 @@ func (d *DNSChannel) sendDNSQuery(query string) error {
 	// Create custom resolver
 	r := &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx, network, address string) (net.Conn, error) {
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{
 				Timeout: 5 * time.Second,
 			}
@@ -199,7 +200,7 @@ func (d *DNSChannel) lookupTXT(query string) ([]string, error) {
 
 	r := &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx, network, address string) (net.Conn, error) {
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{
 				Timeout: 5 * time.Second,
 			}
