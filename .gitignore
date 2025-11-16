@@ -1,0 +1,76 @@
+# Red Team C2 Framework - Git Ignore
+
+# Build artifacts
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+implant/implant
+teamserver/target/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+postgres_data/
+
+# Logs
+*.log
+logs/
+teamserver_logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.Python
+*.egg-info/
+dist/
+
+# Rust
+Cargo.lock
+**/*.rs.bk
+
+# Go
+vendor/
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive data
+credentials.txt
+keys/
+*.pem
+*.key
+*.crt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker
+docker-compose.override.yml
+
+# Test artifacts
+coverage/
+*.cover
+.coverage
+htmlcov/

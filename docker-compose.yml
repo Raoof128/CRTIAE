@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for C2 operations
+  database:
+    image: postgres:15-alpine
+    container_name: c2_database
+    environment:
+      POSTGRES_USER: c2user
+      POSTGRES_PASSWORD: c2password
+      POSTGRES_DB: c2_database
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./teamserver/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - c2_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U c2user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Rust teamserver
+  teamserver:
+    build:
+      context: ./teamserver
+      dockerfile: Dockerfile
+    container_name: c2_teamserver
+    environment:
+      DATABASE_URL: postgres://c2user:c2password@database:5432/c2_database
+      SERVER_ADDR: 0.0.0.0:8443
+      RUST_LOG: debug
+    ports:
+      - "8443:8443"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - c2_network
+    restart: unless-stopped
+    volumes:
+      - ./teamserver:/app
+      - teamserver_logs:/var/log/teamserver
+
+  # Python controller (optional - for web interface)
+  controller:
+    build:
+      context: ./controller
+      dockerfile: Dockerfile
+    container_name: c2_controller
+    environment:
+      C2_SERVER_URL: http://teamserver:8443
+    depends_on:
+      - teamserver
+    networks:
+      - c2_network
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./controller:/app
+
+volumes:
+  postgres_data:
+    driver: local
+  teamserver_logs:
+    driver: local
+
+networks:
+  c2_network:
+    driver: bridge
