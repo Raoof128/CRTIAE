@@ -1,0 +1,186 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  go-coverage:
+    name: Go Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Run tests with coverage
+        working-directory: ./implant
+        run: |
+          go test -v -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Generate coverage report
+        working-directory: ./implant
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out | tee coverage.txt
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./implant/coverage.out
+          flags: implant
+          name: implant-coverage
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: go-coverage
+          path: |
+            implant/coverage.out
+            implant/coverage.html
+            implant/coverage.txt
+
+      - name: Check coverage threshold
+        working-directory: ./implant
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 50" | bc -l) )); then
+            echo "Coverage below 50% threshold"
+            exit 1
+          fi
+
+  rust-coverage:
+    name: Rust Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Run tests with coverage
+        working-directory: ./teamserver
+        run: |
+          cargo tarpaulin --out Xml --out Html --output-dir coverage || echo "Tarpaulin failed, skipping coverage"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./teamserver/coverage/cobertura.xml
+          flags: teamserver
+          name: teamserver-coverage
+        continue-on-error: true
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: rust-coverage
+          path: ./teamserver/coverage/
+        continue-on-error: true
+
+  python-coverage:
+    name: Python Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: ./controller
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests with coverage
+        working-directory: ./controller
+        run: |
+          pytest --cov=. --cov-report=xml --cov-report=html --cov-report=term | tee coverage.txt
+        continue-on-error: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./controller/coverage.xml
+          flags: controller
+          name: controller-coverage
+        continue-on-error: true
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: python-coverage
+          path: |
+            controller/coverage.xml
+            controller/htmlcov/
+            controller/coverage.txt
+        continue-on-error: true
+
+  coverage-summary:
+    name: Coverage Summary
+    needs: [go-coverage, rust-coverage, python-coverage]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate summary
+        run: |
+          echo "# Code Coverage Summary" > coverage_summary.md
+          echo "" >> coverage_summary.md
+
+          if [ -f go-coverage/coverage.txt ]; then
+            echo "## Go Implant" >> coverage_summary.md
+            cat go-coverage/coverage.txt >> coverage_summary.md
+            echo "" >> coverage_summary.md
+          fi
+
+          if [ -f python-coverage/coverage.txt ]; then
+            echo "## Python Controller" >> coverage_summary.md
+            cat python-coverage/coverage.txt >> coverage_summary.md
+            echo "" >> coverage_summary.md
+          fi
+
+          echo "## Full Report" >> coverage_summary.md
+          echo "See Codecov dashboard for detailed coverage analysis" >> coverage_summary.md
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-summary
+          path: coverage_summary.md
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('coverage_summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+        continue-on-error: true

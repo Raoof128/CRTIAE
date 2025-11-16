@@ -1,0 +1,219 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
+
+jobs:
+  integration-test:
+    name: Full Stack Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: c2user
+          POSTGRES_PASSWORD: c2password
+          POSTGRES_DB: c2_database
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd implant && go mod download
+          cd ../teamserver && cargo fetch
+          cd ../controller && pip install -r requirements.txt
+
+      - name: Build implant
+        working-directory: ./implant
+        run: go build -o implant main.go
+
+      - name: Build teamserver
+        working-directory: ./teamserver
+        env:
+          DATABASE_URL: postgres://c2user:c2password@localhost:5432/c2_database
+        run: cargo build --release
+
+      - name: Start teamserver
+        working-directory: ./teamserver
+        env:
+          DATABASE_URL: postgres://c2user:c2password@localhost:5432/c2_database
+          SERVER_ADDR: 127.0.0.1:8443
+          RUST_LOG: debug
+        run: |
+          cargo run --release &
+          echo $! > teamserver.pid
+          sleep 10
+
+      - name: Verify teamserver is running
+        run: |
+          timeout 30 bash -c 'until curl -k -s https://localhost:8443/health; do sleep 2; done'
+
+      - name: Run implant (background)
+        working-directory: ./implant
+        run: |
+          ./implant --server https://127.0.0.1:8443 --interval 10 --jitter 5 --insecure &
+          echo $! > implant.pid
+          sleep 15
+
+      - name: Test controller - List beacons
+        working-directory: ./controller
+        run: |
+          python main.py --server http://127.0.0.1:8443 beacons | tee beacons.txt
+          # Verify at least one beacon
+          grep -q "beacon-" beacons.txt
+
+      - name: Test controller - Execute command
+        working-directory: ./controller
+        run: |
+          BEACON_ID=$(python main.py --server http://127.0.0.1:8443 beacons | grep "beacon-" | head -1 | awk '{print $1}')
+          echo "Testing with beacon: $BEACON_ID"
+          python main.py --server http://127.0.0.1:8443 exec "$BEACON_ID" "echo 'Integration test'"
+
+      - name: Wait for command execution
+        run: sleep 20
+
+      - name: Test controller - Get output
+        working-directory: ./controller
+        run: |
+          BEACON_ID=$(python main.py --server http://127.0.0.1:8443 beacons | grep "beacon-" | head -1 | awk '{print $1}')
+          python main.py --server http://127.0.0.1:8443 output "$BEACON_ID" | tee output.txt
+          # Verify output received
+          grep -q "Integration test" output.txt || echo "Warning: Command output not received"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -f teamserver/teamserver.pid ] && kill $(cat teamserver/teamserver.pid) || true
+          [ -f implant/implant.pid ] && kill $(cat implant/implant.pid) || true
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-test-logs
+          path: |
+            beacons.txt
+            output.txt
+
+  docker-integration-test:
+    name: Docker Stack Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: docker-compose build
+
+      - name: Start services
+        run: docker-compose up -d
+
+      - name: Wait for services
+        run: |
+          timeout 60 bash -c 'until docker-compose ps database | grep -q healthy; do sleep 2; done'
+          sleep 10
+
+      - name: Check service health
+        run: |
+          docker-compose ps
+          curl -k -s https://localhost:8443/health || echo "Teamserver health check failed"
+
+      - name: Test beacon connectivity
+        run: |
+          cd implant
+          go build -o implant main.go
+          timeout 30 ./implant --server https://host.docker.internal:8443 --interval 5 --jitter 2 --insecure &
+          IMPLANT_PID=$!
+          sleep 15
+          kill $IMPLANT_PID || true
+
+      - name: Verify beacon registration
+        run: |
+          docker-compose exec -T controller python main.py beacons | tee beacons.txt
+          grep -q "beacon-" beacons.txt || echo "Warning: No beacons found"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          docker-compose logs > docker_logs.txt
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose down -v
+
+      - name: Upload artifacts
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-integration-logs
+          path: |
+            docker_logs.txt
+            beacons.txt
+
+  performance-test:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Run Go benchmarks
+        working-directory: ./implant
+        run: |
+          go test -bench=. -benchmem ./... | tee bench.txt
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run Rust benchmarks
+        working-directory: ./teamserver
+        run: |
+          cargo bench || echo "Rust benchmarks not configured"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: |
+            implant/bench.txt

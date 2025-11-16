@@ -1,0 +1,260 @@
+# Prometheus Alert Rules for Red Team C2 Framework
+
+groups:
+  # Beacon Health Alerts
+  - name: beacon_health
+    interval: 30s
+    rules:
+      - alert: NoActiveBeacons
+        expr: c2_beacons_active == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: beacons
+        annotations:
+          summary: "No active beacons detected"
+          description: "There have been no active beacons for 5 minutes. Check implant connectivity."
+
+      - alert: HighBeaconDropRate
+        expr: rate(c2_beacons_disconnected[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: beacons
+        annotations:
+          summary: "High beacon drop rate detected"
+          description: "More than 10% of beacons disconnecting per 5 minutes. Possible network issue or detection."
+
+      - alert: BeaconCheckInFailure
+        expr: increase(c2_beacon_checkin_failures[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          component: beacons
+        annotations:
+          summary: "Multiple beacon check-in failures"
+          description: "{{ $value }} beacon check-in failures in the last 5 minutes. Investigate teamserver availability."
+
+  # Command Execution Alerts
+  - name: command_execution
+    interval: 30s
+    rules:
+      - alert: HighCommandFailureRate
+        expr: rate(c2_commands_failed[5m]) / rate(c2_commands_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          component: commands
+        annotations:
+          summary: "High command failure rate"
+          description: "More than 20% of commands are failing. Check beacon connectivity and command syntax."
+
+      - alert: CommandQueueBacklog
+        expr: c2_commands_queued > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: commands
+        annotations:
+          summary: "Large command queue backlog"
+          description: "{{ $value }} commands queued. Beacons may not be checking in frequently enough."
+
+      - alert: LongCommandDuration
+        expr: histogram_quantile(0.95, c2_command_duration_seconds) > 300
+        for: 5m
+        labels:
+          severity: info
+          component: commands
+        annotations:
+          summary: "Commands taking longer than expected"
+          description: "95th percentile command duration is {{ $value }}s. May indicate slow beacon execution."
+
+  # API Performance Alerts
+  - name: api_performance
+    interval: 30s
+    rules:
+      - alert: HighAPIErrorRate
+        expr: rate(c2_api_errors_total[5m]) / rate(c2_api_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High API error rate"
+          description: "More than 5% of API requests are failing. Check teamserver logs."
+
+      - alert: SlowAPIResponses
+        expr: histogram_quantile(0.95, c2_api_request_duration_seconds) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Slow API responses"
+          description: "95th percentile API latency is {{ $value }}s. Performance degradation detected."
+
+      - alert: HighAPIRequestRate
+        expr: rate(c2_api_requests_total[1m]) > 1000
+        for: 2m
+        labels:
+          severity: info
+          component: api
+        annotations:
+          summary: "Unusually high API request rate"
+          description: "{{ $value }} requests/sec. May indicate automation or potential issue."
+
+  # Database Health Alerts
+  - name: database_health
+    interval: 30s
+    rules:
+      - alert: DatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database is down"
+          description: "PostgreSQL database is not responding. All C2 operations will fail."
+
+      - alert: HighDatabaseConnections
+        expr: c2_db_connections_active > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High database connection count"
+          description: "{{ $value }} active database connections. May indicate connection leak."
+
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, c2_db_query_duration_seconds) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Slow database queries"
+          description: "95th percentile query duration is {{ $value }}s. Database performance degraded."
+
+      - alert: DatabaseSizeGrowing
+        expr: rate(c2_db_size_bytes[1h]) > 10485760  # 10MB/hour
+        for: 1h
+        labels:
+          severity: info
+          component: database
+        annotations:
+          summary: "Rapid database growth"
+          description: "Database growing at {{ $value | humanize }}B/hour. Consider cleanup."
+
+  # System Resource Alerts
+  - name: system_resources
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "Low disk space"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}:{{ $labels.mountpoint }}."
+
+      - alert: DiskSpaceCritical
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Critical disk space"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}:{{ $labels.mountpoint }}. Immediate action required."
+
+  # Security Alerts
+  - name: security
+    interval: 30s
+    rules:
+      - alert: HighFailedAuthAttempts
+        expr: increase(c2_auth_failures[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "High number of authentication failures"
+          description: "{{ $value }} failed authentication attempts in 5 minutes. Possible brute force attack."
+
+      - alert: UnauthorizedAccessAttempt
+        expr: increase(c2_unauthorized_access[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Unauthorized access attempt detected"
+          description: "{{ $value }} unauthorized access attempts detected. Security investigation required."
+
+      - alert: SuspiciousBeaconActivity
+        expr: rate(c2_suspicious_activity[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Suspicious beacon activity detected"
+          description: "Anomalous behavior detected from beacon {{ $labels.beacon_id }}."
+
+  # Operational Alerts
+  - name: operational
+    interval: 30s
+    rules:
+      - alert: TeamserverDown
+        expr: up{job="teamserver"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: teamserver
+        annotations:
+          summary: "Teamserver is down"
+          description: "Teamserver is not responding. All C2 operations are offline."
+
+      - alert: TeamserverRestart
+        expr: changes(process_start_time_seconds{job="teamserver"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: info
+          component: teamserver
+        annotations:
+          summary: "Teamserver restarted"
+          description: "Teamserver process restarted. Check for crashes or updates."
+
+      - alert: HighLogVolume
+        expr: rate(c2_log_entries[5m]) > 1000
+        for: 5m
+        labels:
+          severity: info
+          component: logging
+        annotations:
+          summary: "High log volume"
+          description: "{{ $value }} log entries per second. May indicate verbose logging or issues."
